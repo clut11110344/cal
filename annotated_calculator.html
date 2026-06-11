@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>註解計算機 - Annotated Calculator</title>
+    
+    <!-- Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Load Phosphor Icons for beautiful UI icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- Load html2canvas for image export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <!-- Load Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Tailwind gray-100 */
+        }
+        
+        /* Hide arrows on number inputs for cleaner look */
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type="number"] {
+            -moz-appearance: textfield;
+        }
+
+        /* Custom Scrollbar for the list area */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+
+        /* Smooth transitions */
+        .row-enter {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Drag and Drop Styles */
+        .dragging {
+            opacity: 0.6;
+            background-color: #f8fafc; /* Tailwind gray-50 */
+            border: 2px dashed #93c5fd !important; /* Tailwind blue-300 */
+            transform: scale(0.99);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            z-index: 50;
+        }
+        .drag-handle {
+            cursor: grab;
+        }
+        .drag-handle:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+
+<body class="flex items-center justify-center min-h-screen p-4 text-gray-800">
+
+    <!-- Main Application Container -->
+    <div id="capture-area" class="w-full max-w-3xl bg-white rounded-2xl shadow-xl border border-gray-100 flex flex-col overflow-hidden" style="height: 85vh;">
+        
+        <!-- Header Section -->
+        <div class="px-6 py-5 bg-white border-b border-gray-100 flex justify-between items-center z-10 shrink-0 shadow-sm">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                    <i class="ph-fill ph-calculator text-blue-500"></i>
+                    註解計算機
+                </h1>
+                <p class="text-sm text-gray-500 mt-1">純鍵盤操作支援：在數字欄輸入 + - * / 自動新增下一行，Enter 切換註解。</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="exportImage()" class="text-sm px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition font-medium flex items-center gap-1">
+                    <i class="ph ph-image"></i> 匯出圖片
+                </button>
+                <button onclick="clearAll()" class="text-sm px-4 py-2 text-red-500 hover:bg-red-50 rounded-lg transition font-medium flex items-center gap-1">
+                    <i class="ph ph-trash"></i> 全部清除
+                </button>
+            </div>
+        </div>
+
+        <!-- Scrollable List of Calculation Entries -->
+        <div id="entries-container" class="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar bg-gray-50/50">
+            <!-- Rows will be injected here by JavaScript -->
+        </div>
+
+        <!-- Footer Section (Total Display & Add Button) -->
+        <div class="bg-white border-t border-gray-200 p-6 z-10 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
+                <button onclick="addNewRow('+')" class="w-full sm:w-auto px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700 font-semibold rounded-xl transition flex items-center justify-center gap-2 border border-blue-200 shadow-sm">
+                    <i class="ph ph-plus-circle text-lg"></i>
+                    手動新增一行
+                </button>
+
+                <div class="flex items-center gap-4 w-full sm:w-auto justify-end">
+                    <span class="text-lg font-medium text-gray-500">總計 (Total) =</span>
+                    <span id="total-display" class="text-3xl font-bold text-gray-900 font-mono tracking-tight">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const container = document.getElementById('entries-container');
+        const totalDisplay = document.getElementById('total-display');
+
+        // Initial setup
+        window.onload = () => {
+            if (!loadFromLocalStorage()) {
+                addNewRow('+'); // Start with one empty row if no data
+            }
+            focusFirstInput();
+        };
+
+        // Utility: Format numbers with commas (e.g., 1,000,000.5)
+        function formatNumber(num) {
+            // Prevent long floating point errors
+            const rounded = Math.round(num * 100000000) / 100000000;
+            if (isNaN(rounded) || !isFinite(rounded)) return "錯誤 (Error)";
+            
+            return rounded.toLocaleString('en-US', { 
+                maximumFractionDigits: 6 
+            });
+        }
+
+        // Calculate the running total by iterating through the DOM elements
+        function calculateTotal() {
+            let total = 0;
+            const rows = document.querySelectorAll('.entry-row');
+            
+            rows.forEach((row, index) => {
+                const op = row.querySelector('.operator-select').value;
+                const valStr = row.querySelector('.value-input').value;
+                const val = parseFloat(valStr.replace(/,/g, '')) || 0; // Strip commas if any, parse float
+
+                if (index === 0 && op === '-' && total === 0) {
+                     // If first row is subtraction, treat as 0 - val
+                    total -= val;
+                } else if (index === 0) {
+                    // Usually first row starts the total
+                    total = val;
+                } else {
+                    // Apply operators to running total
+                    if (op === '+') total += val;
+                    if (op === '-') total -= val;
+                    if (op === '*') total *= val;
+                    if (op === '/') {
+                        if (val !== 0) total /= val;
+                    }
+                }
+            });
+
+            totalDisplay.innerText = formatNumber(total);
+            saveToLocalStorage(); // Auto-save whenever total is calculated
+        }
+
+        // Create and append a new calculation row
+        function addNewRow(initialOperator = '+', focusValue = true) {
+            const row = document.createElement('div');
+            row.className = 'entry-row flex items-center gap-3 bg-white p-3 rounded-xl shadow-sm border border-gray-100 row-enter group relative';
+            
+            // HTML Structure for a single row
+            row.innerHTML = `
+                <!-- Drag Handle -->
+                <div class="drag-handle shrink-0 p-1 flex items-center justify-center rounded text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition" title="按住拖曳以排序">
+                    <i class="ph ph-dots-six-vertical text-xl"></i>
+                </div>
+
+                <!-- Operator Dropdown -->
+                <div class="relative shrink-0">
+                    <select class="operator-select appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2 pl-3 pr-8 rounded-lg font-bold text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer hover:bg-gray-100 transition">
+                        <option value="+">＋</option>
+                        <option value="-">－</option>
+                        <option value="*">×</option>
+                        <option value="/">÷</option>
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                        <i class="ph-bold ph-caret-down text-xs"></i>
+                    </div>
+                </div>
+
+                <!-- Value Input -->
+                <input type="text" inputmode="decimal" placeholder="0" class="value-input flex-1 w-24 bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-4 text-right text-lg font-mono font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition placeholder:text-gray-300">
+                
+                <!-- Annotation Input -->
+                <input type="text" placeholder="輸入註解 (例如：午餐費用)..." class="note-input flex-[2] bg-transparent border-b border-transparent hover:border-gray-200 focus:border-blue-500 rounded-none py-2 px-3 text-gray-600 focus:outline-none focus:bg-white transition placeholder:text-gray-400">
+                
+                <!-- Delete Button -->
+                <button class="delete-btn shrink-0 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition opacity-0 group-hover:opacity-100 focus:opacity-100 outline-none">
+                    <i class="ph ph-trash text-xl"></i>
+                </button>
+            `;
+
+            // Setup References
+            const dragHandle = row.querySelector('.drag-handle');
+            const opSelect = row.querySelector('.operator-select');
+            const valInput = row.querySelector('.value-input');
+            const noteInput = row.querySelector('.note-input');
+            const delBtn = row.querySelector('.delete-btn');
+
+            // Set initial operator
+            opSelect.value = initialOperator;
+
+            // 1. Recalculate on any change
+            opSelect.addEventListener('change', calculateTotal);
+            valInput.addEventListener('input', (e) => {
+                // Allow only numbers, decimals, and basic validation
+                e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+                
+                // Prevent multiple decimals
+                const parts = e.target.value.split('.');
+                if(parts.length > 2) {
+                    e.target.value = parts[0] + '.' + parts.slice(1).join('');
+                }
+                
+                calculateTotal();
+            });
+
+            // 2. Keyboard Navigation Magic
+            valInput.addEventListener('keydown', (e) => {
+                const isMathKey = ['+', '-', '*', '/'].includes(e.key);
+                
+                if (isMathKey) {
+                    e.preventDefault(); // Stop character from being typed
+                    
+                    if (valInput.value.trim() === '') {
+                        // If empty, just change current operator
+                        opSelect.value = e.key;
+                        calculateTotal();
+                    } else {
+                        // If has value, trigger new row with this operator
+                        addNewRow(e.key, true);
+                    }
+                } 
+                else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Move to annotation input
+                    noteInput.focus();
+                }
+            });
+
+            noteInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Create new row with default addition when hitting enter on note
+                    addNewRow('+', true);
+                }
+            });
+            noteInput.addEventListener('input', saveToLocalStorage); // Auto-save on note change
+
+            // 3. Drag and Drop Actions
+            // 只有在游標按住把手時，才允許整個 row 被拖曳 (避免影響輸入框的文字選取)
+            dragHandle.addEventListener('mousedown', () => row.setAttribute('draggable', 'true'));
+            dragHandle.addEventListener('mouseup', () => row.removeAttribute('draggable'));
+            dragHandle.addEventListener('mouseleave', () => row.removeAttribute('draggable'));
+
+            row.addEventListener('dragstart', () => {
+                row.classList.add('dragging');
+            });
+
+            row.addEventListener('dragend', () => {
+                row.classList.remove('dragging');
+                row.removeAttribute('draggable'); // 重置拖曳狀態
+                calculateTotal(); // 重新排序後，依據新順序計算總和
+            });
+
+            // 4. Delete Action
+            delBtn.addEventListener('click', () => {
+                const rowsCount = document.querySelectorAll('.entry-row').length;
+                if (rowsCount > 1) {
+                    row.style.transform = 'translateY(10px)';
+                    row.style.opacity = '0';
+                    setTimeout(() => {
+                        row.remove();
+                        calculateTotal();
+                    }, 200);
+                } else {
+                    // If it's the last row, just clear it instead of deleting
+                    valInput.value = '';
+                    noteInput.value = '';
+                    opSelect.value = '+';
+                    calculateTotal();
+                    valInput.focus();
+                }
+            });
+
+            // Append to DOM
+            container.appendChild(row);
+            
+            // Scroll to bottom
+            container.scrollTop = container.scrollHeight;
+
+            // Focus management
+            if (focusValue) {
+                // Slight delay to allow DOM render before focus
+                setTimeout(() => valInput.focus(), 10);
+            }
+
+            calculateTotal();
+        }
+
+        function focusFirstInput() {
+            const firstInput = document.querySelector('.value-input');
+            if (firstInput) firstInput.focus();
+        }
+
+        function clearAll() {
+            container.innerHTML = '';
+            totalDisplay.innerText = '0';
+            addNewRow('+');
+            saveToLocalStorage(); // Clear local storage state as well
+        }
+
+        // --- 拖曳排序的核心邏輯 (Container Logic) ---
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault(); // 允許放下 (Drop)
+            const afterElement = getDragAfterElement(container, e.clientY);
+            const draggable = document.querySelector('.dragging');
+            
+            if (draggable) {
+                if (afterElement == null) {
+                    container.appendChild(draggable);
+                } else {
+                    container.insertBefore(draggable, afterElement);
+                }
+            }
+        });
+
+        // 判斷拖曳中的元素目前應該插在哪個元素之前
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.entry-row:not(.dragging)')];
+
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        // --- LocalStorage 儲存與讀取功能 ---
+        function saveToLocalStorage() {
+            const rows = document.querySelectorAll('.entry-row');
+            const data = Array.from(rows).map(row => ({
+                operator: row.querySelector('.operator-select').value,
+                value: row.querySelector('.value-input').value,
+                note: row.querySelector('.note-input').value
+            }));
+            localStorage.setItem('annotatedCalcData', JSON.stringify(data));
+        }
+
+        function loadFromLocalStorage() {
+            const dataStr = localStorage.getItem('annotatedCalcData');
+            if (dataStr) {
+                try {
+                    const data = JSON.parse(dataStr);
+                    if (data && data.length > 0) {
+                        container.innerHTML = ''; // 清空預設列
+                        data.forEach(item => {
+                            addNewRow(item.operator, false);
+                            const newRow = container.lastElementChild;
+                            newRow.querySelector('.value-input').value = item.value;
+                            newRow.querySelector('.note-input').value = item.note;
+                        });
+                        calculateTotal();
+                        return true;
+                    }
+                } catch (e) {
+                    console.error("讀取儲存資料失敗:", e);
+                }
+            }
+            return false;
+        }
+
+        // --- 匯出成圖片功能 ---
+        function exportImage() {
+            const captureArea = document.getElementById('capture-area');
+            const originalHeight = captureArea.style.height;
+            const originalOverflow = container.style.overflowY;
+            
+            // 暫時展開整個列表以完整截圖
+            captureArea.style.height = 'auto';
+            container.style.overflowY = 'visible';
+
+            html2canvas(captureArea, {
+                scale: 2, // 提高圖片解析度
+                backgroundColor: '#ffffff'
+            }).then(canvas => {
+                // 恢復原本的樣式
+                captureArea.style.height = originalHeight;
+                container.style.overflowY = originalOverflow;
+
+                // 觸發下載
+                const link = document.createElement('a');
+                link.download = '註解計算機紀錄.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            }).catch(err => {
+                console.error("匯出圖片失敗:", err);
+                captureArea.style.height = originalHeight;
+                container.style.overflowY = originalOverflow;
+            });
+        }
+    </script>
+</body>
+</html>
